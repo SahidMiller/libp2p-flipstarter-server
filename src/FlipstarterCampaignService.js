@@ -182,7 +182,7 @@ module.exports = class FlipstarterCampaignService {
       if (result) {
         // If we successfully broadcasted the transaction..
         campaign.fullfilled = true
-        campaign.fullfillmentTx = txHash
+        campaign.fullfillmentTx = result
         campaign.fullfillmentTimestamp = moment().unix()
       }
     }
