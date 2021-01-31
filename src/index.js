@@ -71,6 +71,11 @@ module.exports = class FlipstarterServer extends EventEmitter {
 		    return { ok: true }
 		}))
 
+		this.libp2p.handle('/flipstarter/campaignDetails', responseStream(async (req) => {
+			const campaignId = req.body.campaignId
+			return await self.campaignService.getCampaign(campaignId)
+		}))
+
 		//Handle submits and create 
 		this.watcher.on('commitment-revoked', async (commitment) => {
 			const updatedCampaign = await self.campaignService.handleRevocation(commitment)
