@@ -8,7 +8,7 @@ module.exports = class FlipstarterCampaignService {
     this.repository = repository
   }
 
-  async getCampaign(campiagnId) {
+  async getCampaign(campaignId) {
     return await this.repository.getCampaign(campaignId)
   }
 
