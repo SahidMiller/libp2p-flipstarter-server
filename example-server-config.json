@@ -1,0 +1,25 @@
+{
+	"__REMOTE_API_ADDRESS__": "http://localhost:5001",
+	"__REMOTE_MULTI_ADDRESS__": "/ip4/10.0.0.19/tcp/4001/p2p/123Dh...",
+	"__RSA_KEY__": "-----BEGIN ENCRYPTED PRIVATE KEY----- ... -----END ENCRYPTED PRIVATE KEY-----",
+	"__RSA_PASSWORD__": "testpassword",
+	"__USE_BOOTSTRAPPER_RELAY_ADDRESSES__": true,
+	"__PUBLIC_SWARM_ADDRESSES__": [],
+	"__PRIVATE_SWARM_ADDRESSES__": [
+		"/ip4/0.0.0.0/tcp/4003",
+		"/ip4/0.0.0.0/tcp/4003/ws",
+		"/ip4/0.0.0.0/tcp/4004/wss"
+	],
+	"__ELECTRUM_SERVERS__": [
+		{ "address": "testnet.bitcoincash.network", "port": 60004, "scheme": "wss" },
+		{ "address": "blackie.c3-soft.com", "port": 60004, "scheme": "wss" },
+		{ "address": "electroncash.de", "port": 60004, "scheme": "wss" }
+	],
+	"__PRELOAD_NODES__": [
+		"http://node0.preload.ipfs.io", 
+		"http://node1.preload.ipfs.io", 
+		"http://node2.preload.ipfs.io", 
+		"http://node3.preload.ipfs.io"
+	],
+	"__KEYEXPORT_PASS__": "temppassword"
+}
