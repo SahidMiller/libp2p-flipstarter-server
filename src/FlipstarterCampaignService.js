@@ -175,8 +175,10 @@ module.exports = class FlipstarterCampaignService {
     const requestedSatoshis = getRequestedSatoshis(campaign)
 
     if (nextCommittedSatoshis >= requestedSatoshis) {
+      
       const commitments = FlipstarterCampaignService.getUnrevokedCommitments(campaign)
-      const result = await fullfillCampaign(commitments)
+      const result = await fullfillCampaign(campaign.recipients, commitments)
+      
       if (result) {
         // If we successfully broadcasted the transaction..
         campaign.fullfilled = true
