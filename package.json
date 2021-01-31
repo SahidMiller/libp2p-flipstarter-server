@@ -2,12 +2,19 @@
   "name": "libp2p-flipstarter-server",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "src/index.js",
   "scripts": {
     "test": "jest --group=-e2e"
   },
+  "bin": {
+    "libp2p-flipstarter-server": "src/cli.js"
+  },
   "author": "",
   "license": "ISC",
+  "browser": {
+    "./src/repository/node-repository.js": "./src/repository/browser-repository.js",
+    "./src/index": "./src/flipstarterServer"
+  },
   "dependencies": {
     "aggregate-error": "^3.1.0",
     "cids": "^1.1.5",

@@ -12,15 +12,6 @@ module.exports = class FlipstarterCampaignService {
     return await this.repository.getCampaign(campaignId)
   }
 
-  async checkAllCampaignCommitments(cb) {
-    const campaigns = await this.repository.getCampaigns()
-
-    Promise.all(campaigns.map(async (campaign) => {
-      // Check each contributions commitment..
-      cb(await getUnrevokedCommitments(campaign))
-    }))
-  }
-
   async handleCampaignCreation(campaignData) {
     const hasData = !!campaignData && !isNaN(Number(campaignData.starts)) && !isNaN(Number(campaignData.expires))
     const hasRecipients = hasData && campaignData.recipients && campaignData.recipients.length && campaignData.recipients.every(r => {
@@ -34,15 +25,35 @@ module.exports = class FlipstarterCampaignService {
 
   	const recipients = campaignData.recipients.map(recipient => {
       return {
+        name: recipient.name,
+        url: recipient.url,
+        image: recipient.image,
+        alias: recipient.alias,
         address: recipient.address,
-        satoshis: recipient.satoshis
+        signature: recipient.signature,
+        satoshis: recipient.satoshis,
       }
     })
 
+    const getDescriptionLanguage = (code) => {
+      const description = campaignData.descriptions && campaignData.descriptions[code] || {}
+      return {
+        abstract: description.abstract || "",
+        proposal: description.proposal || ""
+      }
+    }
+
   	const campaign = {
+      title: campaignData.title,
       starts: Number(campaignData.starts),
       expires: Number(campaignData.expires),
-      recipients
+      recipients,
+      descriptions: {
+        en: getDescriptionLanguage("en"),
+        es: getDescriptionLanguage("es"),
+        zh: getDescriptionLanguage("zh"),
+        ja: getDescriptionLanguage("ja")
+      }
     }
 
     return await this.repository.createCampaign(campaign)
@@ -86,7 +97,7 @@ module.exports = class FlipstarterCampaignService {
       throw new FlipstarterErrors.CampaignNotStartedError(campaignId)
     }
 
-    const existingCommitments = getUnrevokedCommitments(campaign)
+    const existingCommitments = FlipstarterCampaignService.getUnrevokedCommitments(campaign)
     const currentCommittedSatoshis = getCommittedSatoshis(existingCommitments)
     const currentCommitmentCount = existingCommitments.length
 
@@ -164,7 +175,7 @@ module.exports = class FlipstarterCampaignService {
     const requestedSatoshis = getRequestedSatoshis(campaign)
 
     if (nextCommittedSatoshis >= requestedSatoshis) {
-      const commitments = getUnrevokedCommitments(campaign)
+      const commitments = FlipstarterCampaignService.getUnrevokedCommitments(campaign)
       const result = await fullfillCampaign(commitments)
       if (result) {
         // If we successfully broadcasted the transaction..
@@ -174,8 +185,8 @@ module.exports = class FlipstarterCampaignService {
       }
     }
 
-    await this.repository.updateCampaign(campaign)
-    return contribution
+    const updatedCampaign = await this.repository.updateCampaign(campaign)
+    return { campaign: updatedCampaign, contribution }
   }
 
   async handleRevocation(commitment) {
@@ -200,9 +211,19 @@ module.exports = class FlipstarterCampaignService {
 	        revokeTimestamp: moment().unix()
 	      }
 	  	
-	  	  await this.repository.updateCampaign(campaign)
+	  	  return await this.repository.updateCampaign(campaign)
 	    }
 	  }
+  }
+
+  static getUnrevokedCommitments(campaign) {
+    
+    return (campaign.contributions || []).reduce((commitments, contribution) => {
+
+      commitments = commitments.concat(contribution.commitments.filter(commitment => !isCommitmentRevoked(campaign, commitment)))
+      return commitments
+
+    }, []);
   }
 }
 
@@ -216,16 +237,6 @@ function isValidCommitment(commitment) {
 
 function doesCommitmentExist(commitments, commitment) {
   return commitments.findIndex(c => commitment.txHash === c.txHash && commitment.txIndex === c.txIndex && commitment.campaignId === c.campaignId) !== -1
-}
-
-function getUnrevokedCommitments(campaign) {
-  
-  return (campaign.contributions || []).reduce((commitments, contribution) => {
-
-    commitments = commitments.concat(contribution.commitments.filter(commitment => !isCommitmentRevoked(campaign, commitment)))
-    return commitments
-
-  }, []);
 }
 
 function getCommittedSatoshis(commitments) {

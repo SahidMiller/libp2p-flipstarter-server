@@ -1,23 +1,17 @@
-const CID = require('cids')
-const { updateIPNS } = require('./utils/ipns')
-const { cat, uploadFile, uploadDirectory, genKey } = require('./utils/ipfs')
-const { hashData } = require('./utils/dag')
 const { Mutex } = require("async-mutex")
-const crypto = require('libp2p-crypto')
-const multibase = require('multibase')
 
-//Since no IPFS key export/import
-const fs = require('fs')
-const path = require('path')
+const getSerializedRecordKey = require('../utils/ipns/get-record-key')
+const { startRemoteListeners, waitForRemoteListeners } = require('../utils/ipns/remote-listener-utils')
+const { cat, uploadFile, uploadDirectory, genKey } = require('../utils/ipfs')
 
 module.exports = class FlipstarterIpfsRepository {
-  constructor(ipfs, libp2p) {
+  constructor(ipfs, preloadNodes) {
     this.ipfs = ipfs
-    this.libp2p = libp2p
+    this.preloadNodes = preloadNodes
   }
 
   getKey(campaign) {
-      const recipientKeys = campaign.recipients.sort((a, b) => a.satoshis - b.satoshis).map(r => r.address + "-" + r.satoshis)
+      const recipientKeys = campaign.recipients.sort((a, b) => a.satoshis - b.satoshis).map(r => r.address.replace(":", "-") + "-" + r.satoshis)
       return campaign.starts + "-" + campaign.expires + "-" + recipientKeys.join()
   }
 
@@ -74,66 +68,49 @@ module.exports = class FlipstarterIpfsRepository {
       throw "updating campaign that doesn't exist: " + campaign.id
     }
     
-    const keys = await this.ipfs.config.get("keys")
-    const pem = keys[campaign.id]
-    const privateKey = await crypto.keys.import(pem, "temppassword")
-    
-    return await updateCampaignSite(this.ipfs, this.libp2p, campaign, privateKey)
+    return await updateCampaignSite(this.ipfs, this.preloadNodes, campaign)
   }
 
   async updateCampaigns() {
-    const campaigns =  await getCampaignMap(ipfs)
-    const keys = await this.ipfs.config.get("keys")
+    const campaignIds = Object.keys(await getCampaignMap(this.ipfs))
     const self = this
-    return await Promise.all(Object.keys(campaigns).map(async (campaignId) => {
-      const campaign = campaigns[campaignId]
-      const privateKey = await crypto.keys.import(keys[campaignId], "temppassword")
-      return updateCampaignSite(self.ipfs, self.libp2p, campaign, privateKey)
+    return await Promise.all(campaignIds.map(async (campaignId) => {
+      const campaign = await self.getCampaign(campaignId)
+      return updateCampaignSite(self.ipfs, self.preloadNodes, campaign)
     }))
   }
 
   async createCampaign(campaign) {
     const ipfs = this.ipfs
-
+    const preloadNodes = this.preloadNodes
     const keyName = this.getKey(campaign)
     const keys = await ipfs.key.list()
+    
 
     if (keys.find(k => k.name === keyName)) {
       throw "campaign id already exists"
     }
 
-    //Generating key in ipfs then importing it
     const key = await genKey(ipfs, keyName)
 
     try {
 
-      const fileName = "key_" + multibase.names.base32.encode(new TextEncoder().encode(keyName))
-      const { repoPath } = await ipfs.repo.stat()
-
-      const privateKey = await crypto.keys.unmarshalPrivateKey(fs.readFileSync(path.join(repoPath, "keystore", fileName)))
-      const pem = await privateKey.export('temppassword')
-
-      addKey(ipfs, key.id, pem)
-
       await newCampaignSite(ipfs, key.id, campaign)
-      await updateCampaignSite(ipfs, this.libp2p, {
+      return await updateCampaignSite(ipfs, preloadNodes, {
         id: key.id,
         contributions: [], 
         fullfilled: false,
         fullfillmentTx: null,
         fullfillmentTimestamp: null
-      }, privateKey)
+      })
     
     } catch(error) {
       
       await ipfs.key.rm(keyName)
       await removeCampaignSite(ipfs, key.id)
-      await removeKey(ipfs, key.id)
 
       throw error
     }
-
-    return key.id
   }
 }
 
@@ -147,50 +124,6 @@ async function getCampaignMap(ipfs) {
   } finally {
 
     return campaigns
-  }
-}
-
-async function getKeys(ipfs) {
-  let keys = {}
-
-  try {
-
-    keys = await ipfs.config.get("keys")
-
-  } finally {
-
-    return keys
-  }
-}
-
-const keysWriteLock = new Mutex();
-async function addKey(ipfs, id, pem) {
-
-  const unlock = await keysWriteLock.acquire();
-  
-  try {
-  
-    const keys = await getKeys(ipfs)
-    keys[id] = pem
-    await ipfs.config.set("keys", keys)
-
-  } finally {
-    unlock()
-  }
-}
-
-async function removeKey(ipfs, id) {
-
-  const unlock = await keysWriteLock.acquire();
-  
-  try {
-  
-    const keys = await getKeys(ipfs)
-    delete keys[id]
-    await ipfs.config.set("keys", keys)
-
-  } finally {
-    unlock()
   }
 }
 
@@ -211,7 +144,7 @@ async function newCampaignSite(ipfs, campaignId, campaign) {
   }
 }
 
-async function updateCampaignSite(ipfs, libp2p, campaign, privateKey) {
+async function updateCampaignSite(ipfs, preloadNodes, campaign) {
   const fullfillmentInfo = { 
     fullfilled: campaign.fullfilled || false,
     fullfillmentTx: campaign.fullfillmentTx || null,
@@ -229,13 +162,15 @@ async function updateCampaignSite(ipfs, libp2p, campaign, privateKey) {
   
   const unlock = await campaignsWriteLock.acquire();
   let sequenceNum
+  let existingCampaign
 
   try {
 
     const campaigns = await getCampaignMap(ipfs) 
-    const { campaign:existingCampaign, seqNum } = campaigns[campaign.id]
-    sequenceNum = seqNum
-    campaigns[campaign.id] = { campaign: existingCampaign, campaignCid, seqNum: seqNum + 1 }
+    const storedCampaignInfo = campaigns[campaign.id]
+    sequenceNum = storedCampaignInfo.seqNum
+    existingCampaign = storedCampaignInfo.campaign
+    campaigns[campaign.id] = { campaign: existingCampaign, campaignCid, seqNum: sequenceNum + 1 }
     await ipfs.config.set("campaigns", campaigns)
   
   } finally {
@@ -243,9 +178,9 @@ async function updateCampaignSite(ipfs, libp2p, campaign, privateKey) {
     unlock()
   }
   
-  await updateIPNS(ipfs, libp2p, privateKey, campaign.id, sequenceNum, campaignCid)
+  await updateIPNS(ipfs, preloadNodes, campaign.id, sequenceNum, campaignCid)
 
-  return { ...campaign, ...fullfillmentInfo, contributions }
+  return { ...existingCampaign, ...fullfillmentInfo, contributions }
 }
 
 async function removeCampaignSite(ipfs, campaignId) {
@@ -261,4 +196,15 @@ async function removeCampaignSite(ipfs, campaignId) {
   } finally {
      unlock()
   }
+}
+
+async function updateIPNS(ipfs, preloadNodes, keyId, seqNum = 0, cid) {
+  const recordKey = getSerializedRecordKey(keyId);
+
+  startRemoteListeners(preloadNodes, keyId)
+  await waitForRemoteListeners(ipfs, recordKey, (attempt, peers) => {
+    return attempt < preloadNodes.length ? peers.length >= preloadNodes.length - attempt : peers.length >= 1
+  })
+
+  await ipfs.name.publish(cid, { keyId, resolve: false })
 }
