@@ -206,5 +206,5 @@ async function updateIPNS(ipfs, preloadNodes, keyId, seqNum = 0, cid) {
     return attempt < preloadNodes.length ? peers.length >= preloadNodes.length - attempt : peers.length >= 1
   })
 
-  await ipfs.name.publish(cid, { keyId, resolve: false })
+  await ipfs.name.publish(cid, { key: keyId, resolve: false })
 }

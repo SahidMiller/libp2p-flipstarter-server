@@ -1,11 +1,13 @@
 const moment = require('moment')
 const { FlipstarterErrors } = require('flipstarter-campaign-utilities')
 const AggregateError = require('aggregate-error')
+const { Mutex } = require('async-mutex')
 
 module.exports = class FlipstarterCampaignService {
 
   constructor(repository, watcher) {
     this.repository = repository
+    this.fullfillmentLock = new Mutex()
   }
 
   async getCampaign(campaignId) {
@@ -175,47 +177,72 @@ module.exports = class FlipstarterCampaignService {
     const requestedSatoshis = getRequestedSatoshis(campaign)
 
     if (nextCommittedSatoshis >= requestedSatoshis) {
-      
-      const commitments = FlipstarterCampaignService.getUnrevokedCommitments(campaign)
-      const result = await fullfillCampaign(campaign.recipients, commitments)
-      
-      if (result) {
-        // If we successfully broadcasted the transaction..
-        campaign.fullfilled = true
-        campaign.fullfillmentTx = result
-        campaign.fullfillmentTimestamp = moment().unix()
-      }
-    }
+      //Pause revocations until finished updating fullfillment
+      const unlock = await this.fullfillmentLock.acquire()
 
-    const updatedCampaign = await this.repository.updateCampaign(campaign)
-    return { campaign: updatedCampaign, contribution }
+      try {
+
+        //If successful, make sure the fullfillmentTimestamp occurs before revocations.
+        const fullfillmentTimestamp = moment().unix()
+        const commitments = FlipstarterCampaignService.getUnrevokedCommitments(campaign)
+        const result = await fullfillCampaign(campaign.recipients, commitments)
+        
+        if (result) {
+          // If we successfully broadcasted the transaction..
+          campaign.fullfilled = true
+          campaign.fullfillmentTx = result
+          campaign.fullfillmentTimestamp = fullfillmentTimestamp
+
+          const updatedCampaign = await this.repository.updateCampaign(campaign)
+          return { campaign: updatedCampaign, contribution }
+        }
+        
+      } finally {
+        
+        unlock()
+      }
+    
+    } else {
+
+      const updatedCampaign = await this.repository.updateCampaign(campaign)
+      return { campaign: updatedCampaign, contribution }
+    }
   }
 
   async handleRevocation(commitment) {
-	  // Mark the commitment as revoked.
-	  console.log(`Marked spent commitment '${commitment.txHash}' as revoked.`)
+    //Pause revocations if fullfillment in process
+    const unlock = await this.fullfillmentLock.acquire()
 
-	  const campaign = await this.repository.getCampaign(commitment.campaignId)
+    try {
+  	  // Mark the commitment as revoked.
+  	  console.log(`Marked spent commitment '${commitment.txHash}' as revoked.`)
 
-	  for (let i = 0; i < campaign.contributions.length; i++) {
+  	  const campaign = await this.repository.getCampaign(commitment.campaignId)
 
-	    const contribution = campaign.contributions[i]
+  	  for (let i = 0; i < campaign.contributions.length; i++) {
 
-	    const foundIndex = contribution.commitments.findIndex(c => {
-	      return c.txHash === commitment.txHash && c.txIndex === commitment.txIndex
-	    })
+  	    const contribution = campaign.contributions[i]
 
-	    if (foundIndex !== -1) {
+  	    const foundIndex = contribution.commitments.findIndex(c => {
+  	      return c.txHash === commitment.txHash && c.txIndex === commitment.txIndex
+  	    })
 
-	      contribution.commitments[foundIndex] = {
-	        ...contribution.commitments[foundIndex],
-	        revoked: true,
-	        revokeTimestamp: moment().unix()
-	      }
-	  	
-	  	  return await this.repository.updateCampaign(campaign)
-	    }
-	  }
+  	    if (foundIndex !== -1) {
+
+  	      contribution.commitments[foundIndex] = {
+  	        ...contribution.commitments[foundIndex],
+  	        revoked: true,
+  	        revokeTimestamp: moment().unix()
+  	      }
+  	  	
+  	  	  return await this.repository.updateCampaign(campaign)
+  	    }
+  	  }
+    
+    } finally {
+
+      unlock()
+    }
   }
 
   static getUnrevokedCommitments(campaign) {
