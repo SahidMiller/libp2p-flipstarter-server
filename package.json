@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "aggregate-error": "^3.1.0",
+    "async-mutex": "^0.3.0",
     "cids": "^1.1.5",
     "electrum-cash": "^2.0.6",
     "flipstarter-campaign-utilities": "github:sahidmiller/flipstarter-campaign-utilities",

@@ -10,11 +10,6 @@ module.exports = class FlipstarterIpfsRepository {
     this.preloadNodes = preloadNodes
   }
 
-  getKey(campaign) {
-      const recipientKeys = campaign.recipients.sort((a, b) => a.satoshis - b.satoshis).map(r => r.address.replace(":", "-") + "-" + r.satoshis)
-      return campaign.starts + "-" + campaign.expires + "-" + recipientKeys.join()
-  }
-
   async getCampaigns() {
     const ipfs = this.ipfs
     const campaigns = await getCampaignMap(ipfs)
@@ -83,7 +78,7 @@ module.exports = class FlipstarterIpfsRepository {
   async createCampaign(campaign) {
     const ipfs = this.ipfs
     const preloadNodes = this.preloadNodes
-    const keyName = this.getKey(campaign)
+    const keyName = getKey(campaign)
     const keys = await ipfs.key.list()
     
 
@@ -112,6 +107,11 @@ module.exports = class FlipstarterIpfsRepository {
       throw error
     }
   }
+}
+
+function getKey(campaign) {
+    const recipientKeys = campaign.recipients.sort((a, b) => a.satoshis - b.satoshis).map(r => r.address.replace(":", "-") + "-" + r.satoshis)
+    return campaign.starts + "-" + campaign.expires + "-" + recipientKeys.join()
 }
 
 async function getCampaignMap(ipfs) {
@@ -178,7 +178,8 @@ async function updateCampaignSite(ipfs, preloadNodes, campaign) {
     unlock()
   }
   
-  await updateIPNS(ipfs, preloadNodes, campaign.id, sequenceNum, campaignCid)
+  const keyName = getKey(existingCampaign)
+  await updateIPNS(ipfs, preloadNodes, campaign.id, keyName, sequenceNum, campaignCid)
 
   return { ...existingCampaign, ...fullfillmentInfo, contributions }
 }
@@ -198,7 +199,7 @@ async function removeCampaignSite(ipfs, campaignId) {
   }
 }
 
-async function updateIPNS(ipfs, preloadNodes, keyId, seqNum = 0, cid) {
+async function updateIPNS(ipfs, preloadNodes, keyId, keyName, seqNum = 0, cid) {
   const recordKey = getSerializedRecordKey(keyId);
 
   startRemoteListeners(preloadNodes, keyId)
@@ -206,5 +207,5 @@ async function updateIPNS(ipfs, preloadNodes, keyId, seqNum = 0, cid) {
     return attempt < preloadNodes.length ? peers.length >= preloadNodes.length - attempt : peers.length >= 1
   })
 
-  await ipfs.name.publish(cid, { key: keyId, resolve: false })
+  await ipfs.name.publish(cid, { key: keyName, resolve: false })
 }
